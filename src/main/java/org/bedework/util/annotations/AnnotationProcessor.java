@@ -24,7 +24,6 @@ import java.util.Set;
 import javax.annotation.processing.AbstractProcessor;
 import javax.annotation.processing.ProcessingEnvironment;
 import javax.annotation.processing.RoundEnvironment;
-import javax.annotation.processing.SupportedAnnotationTypes;
 import javax.annotation.processing.SupportedSourceVersion;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.Element;
@@ -36,7 +35,7 @@ import static java.lang.String.format;
  * @author douglm
  *
  */
-@SupportedAnnotationTypes(value= {"*"})
+//@SupportedAnnotationTypes(value= {"*"})
 @SupportedSourceVersion(SourceVersion.RELEASE_17)
 public abstract class AnnotationProcessor
         extends AbstractProcessor {
@@ -88,7 +87,7 @@ public abstract class AnnotationProcessor
               "--------------- process called: " + roundEnv
                       .toString());
 
-      for (final TypeElement tel : annotations) {
+      for (final TypeElement tel: annotations) {
         pstate.note("Annotation " + tel.asType().toString());
       }
     }
