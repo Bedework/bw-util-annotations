@@ -28,10 +28,9 @@ import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
+import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
-import javax.lang.model.util.Types;
-import javax.tools.Diagnostic.Kind;
 import javax.tools.JavaFileObject;
 
 import static java.lang.String.format;
@@ -93,20 +92,6 @@ public class UtilAnn {
     if (out != null) {
       out.close();
     }
-  }
-
-  public void error(final  String msg) {
-    env.getMessager().printMessage(Kind.ERROR, msg);
-  }
-
-  public void warn(final  String msg) {
-    env.getMessager().printMessage(Kind.WARNING, msg);
-  }
-
-  public void note(final  String msg) {
-    // Maven swallowing output
-    System.out.println(msg);
-    env.getMessager().printMessage(Kind.NOTE, msg);
   }
 
   /** Emit a section of template up to a delimiter or to end of file.
@@ -209,11 +194,6 @@ public class UtilAnn {
     }
 
     out.println(" {");
-  }
-
-  public TypeElement asTypeElement(final TypeMirror typeMirror) {
-    final Types TypeUtils = env.getTypeUtils();
-    return (TypeElement)TypeUtils.asElement(typeMirror);
   }
 
   /**
@@ -335,7 +315,7 @@ public class UtilAnn {
    * @return boolean
    */
   public boolean isCollection(final TypeMirror tm) {
-    final TypeElement el = asTypeElement(tm);
+    final var el = (TypeElement)env.getTypeUtils().asElement(tm);
 
     if (el == null) {
       return false;
@@ -343,7 +323,7 @@ public class UtilAnn {
 
     if (el.getKind() == ElementKind.CLASS) {
       for (final TypeMirror itm: el.getInterfaces()) {
-        if (ProcessState.isCollection(itm)) {
+        if (testCollection(itm)) {
           return  true;
         }
       }
@@ -351,14 +331,31 @@ public class UtilAnn {
       return false;
     }
 
-    return ProcessState.isCollection(tm);
+    return testCollection(tm);
+  }
+
+  /**
+   * @param tm TypeMirror
+   * @return boolean
+   */
+  public static boolean testCollection(final TypeMirror tm) {
+    if (!(tm instanceof DeclaredType)) {
+      return false;
+    }
+
+    /* XXX There must be a better way than this */
+    final String typeStr = tm.toString();
+
+    return typeStr.startsWith("java.util.Collection") ||
+            typeStr.startsWith("java.util.List") ||
+            typeStr.startsWith("java.util.Set");
   }
 
   /**
    * @param val
    */
   public void prntncc(final String... val) {
-    for (String ln: val) {
+    for (final String ln: val) {
       out.print(ln);
     }
   }
