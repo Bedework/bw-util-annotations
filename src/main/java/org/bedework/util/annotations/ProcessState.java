@@ -23,6 +23,7 @@ import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeMirror;
 import javax.tools.Diagnostic;
 
@@ -30,12 +31,10 @@ import javax.tools.Diagnostic;
  * @author douglm
  *
  */
-public class ProcessState {
+public abstract class ProcessState {
   private final ProcessingEnvironment env;
 
-  private final UtilAnn util;
-
-  String currentClassName;
+  private ClassHandler classHandler;
 
   /* Don't process inner classes - depth 0 is no class, depth 1 is outer class */
   private int classDepth;
@@ -47,9 +46,14 @@ public class ProcessState {
 
   private boolean debug;
 
+  /** Should create new visitor on each call.
+   *
+   * @return visitor
+   */
+  public abstract ElementVisitor getVisitor();
+
   public ProcessState(final ProcessingEnvironment env) {
     this.env = env;
-    util = new UtilAnn(env);
   }
 
   public ProcessingEnvironment env() {
@@ -63,6 +67,36 @@ public class ProcessState {
    */
   public void option(final String name, final String value) {}
 
+  public ClassHandler getClassHandler(final TypeMirror tm,
+                                      final String outFileName) {
+    classHandler = new ClassHandler(env(),
+                                    tm,
+                                    outFileName);
+
+    return classHandler;
+  }
+
+  public ClassHandler getClassHandler() {
+    return classHandler;
+  }
+
+  public void closeClassHandler() {
+    if (classHandler != null) {
+      classHandler.close();
+      classHandler = null;
+    }
+  }
+
+  public void processClass(final Element el) {
+    final String className = el.asType().toString();
+
+    if (debug()) {
+      note("Processing " + className);
+    }
+
+    el.accept(getVisitor(), this);
+  }
+
   /** Override to do processing for a class
    *
    * @return true to process the class - false to skip.
@@ -74,26 +108,47 @@ public class ProcessState {
   public void endClass(final TypeElement el) {
   }
 
-  public void processMethod(final Element el) {
+  public void processMethod(final ExecutableElement el) {
   }
 
-  public boolean shouldProcessSuper(final TypeMirror tm) {
+  /**
+   *
+   * @param tm for super class
+   * @return true if we want super class processed as a separate class
+   */
+  public boolean shouldProcessSuperClass(final TypeMirror tm) {
     /* Something like
       return tm.toString().startsWith("org.bedework")
      */
     return false;
   }
 
-  public void processSuper(final TypeMirror tm) {
+  /**
+   *
+   * @param tm for super class
+   * @return true if we want super methods embedded in current class
+   */
+  public boolean shouldProcessSuperMethods(final TypeMirror tm) {
+    /* Something like
+      return tm.toString().startsWith("org.bedework")
+     */
+    return false;
+  }
+
+  /**
+   *
+   * @param tm for super class
+   */
+  public void processSuperMethods(final TypeMirror tm) {
     final var el = env.getTypeUtils().asElement(tm);
 
     if (debug()) {
-      note("process super: " + el.toString());
+      note("process super method: " + el.toString());
     }
 
     for (final Element subEl: el.getEnclosedElements()) {
       if (subEl.getKind() == ElementKind.METHOD) {
-        processMethod(subEl);
+        processMethod((ExecutableElement)subEl);
       }
     }
 
@@ -101,33 +156,16 @@ public class ProcessState {
             (TypeElement)env.getTypeUtils().asElement(el.asType());
 
     final TypeMirror superD = typeEl.getSuperclass();
-    if (shouldProcessSuper(superD)) {
-      processSuper(superD);
+    if (shouldProcessSuperMethods(superD)) {
+      processSuperMethods(superD);
     }
   }
 
   public void processExecutable(final ExecutableElement e) {
+    processMethod(e);
   }
 
   public void processingOver() {
-  }
-
-  public UtilAnn util() {
-    return util;
-  }
-
-  /**
-   * @param val name of class
-   */
-  public void setCurrentClassName(final String val) {
-    currentClassName = val;
-  }
-
-  /**
-   * @return String
-   */
-  public String getCurrentClassName() {
-    return currentClassName;
   }
 
   public boolean debug() {
@@ -156,6 +194,47 @@ public class ProcessState {
 
   public int classDepth() {
     return classDepth;
+  }
+
+  /**
+   * @param tm for possible collection
+   * @return boolean
+   */
+  public boolean isCollection(final TypeMirror tm) {
+    final var el = (TypeElement)env.getTypeUtils().asElement(tm);
+
+    if (el == null) {
+      return false;
+    }
+
+    if (el.getKind() == ElementKind.CLASS) {
+      for (final TypeMirror itm: el.getInterfaces()) {
+        if (testCollection(itm)) {
+          return  true;
+        }
+      }
+
+      return false;
+    }
+
+    return testCollection(tm);
+  }
+
+  /**
+   * @param tm TypeMirror
+   * @return boolean
+   */
+  public static boolean testCollection(final TypeMirror tm) {
+    if (!(tm instanceof DeclaredType)) {
+      return false;
+    }
+
+    /* XXX There must be a better way than this */
+    final String typeStr = tm.toString();
+
+    return typeStr.startsWith("java.util.Collection") ||
+            typeStr.startsWith("java.util.List") ||
+            typeStr.startsWith("java.util.Set");
   }
 
   public void error(final String msg) {

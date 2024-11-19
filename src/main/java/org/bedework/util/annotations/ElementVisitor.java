@@ -20,8 +20,6 @@ public class ElementVisitor extends
                           " depth: " + pstate.classDepth());
     }
 
-    pstate.setCurrentClassName(className);
-
     pstate.incClassDepth();
 
     if ((pstate.classDepth() <= 1) &&       // In inner class
@@ -46,11 +44,18 @@ public class ElementVisitor extends
     }
 
     final TypeMirror superD = el.getSuperclass();
-    if (pstate.shouldProcessSuper(superD)) {
-      pstate.processSuper(superD);
+    if (pstate.shouldProcessSuperMethods(superD)) {
+      pstate.processSuperMethods(superD);
     }
 
     pstate.endClass(el);
+
+    if (pstate.shouldProcessSuperClass(superD)) {
+      pstate.processClass(pstate.env()
+                                .getTypeUtils()
+                                .asElement(el.asType()));
+    }
+
     return el;
   }
 

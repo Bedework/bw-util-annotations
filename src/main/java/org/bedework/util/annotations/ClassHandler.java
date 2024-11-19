@@ -18,11 +18,13 @@
 */
 package org.bedework.util.annotations;
 
-import java.io.IOException;
 import java.io.PrintWriter;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.TreeSet;
 
 import javax.annotation.processing.ProcessingEnvironment;
+import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
@@ -30,24 +32,38 @@ import javax.tools.JavaFileObject;
 
 import static java.lang.String.format;
 
-/** Utility methods for annotations
+/** Class for writing classes. We store it all in a bunch of
+ * variables until close when we write it out. This allows us
+ * to add imports as we process the class.
  *
  * @author Mike DOuglass
  */
-public class ClassWriter {
-  private final String className;
+public class ClassHandler {
+  private final TypeMirror tm;
+  private final String outFileName;
 
   private final PrintWriter out;
 
+  private String packageLine;
+  private TreeSet<String> imports;
+  private String classStart;
+  private final TreeSet<String> fields = new TreeSet<>();
+  private final List<String> constructors = new ArrayList<>();
+  private final List<String> methods = new ArrayList<>();
+  private String classEnd;
+
+  private StringBuilder buf;
+
   /**
    * @param env the processing environment
-   * @param className we're processing
+   * @param tm for class we're processing
    * @param outFileName for generated file.
    */
-  public ClassWriter(final ProcessingEnvironment env,
-                     final String className,
-                     final String outFileName) {
-    this.className = className;
+  public ClassHandler(final ProcessingEnvironment env,
+                      final TypeMirror tm,
+                      final String outFileName) {
+    this.tm = tm;
+    this.outFileName = outFileName;
     try {
       final JavaFileObject outFile =
               env.getFiler().createSourceFile(outFileName);
@@ -57,14 +73,113 @@ public class ClassWriter {
     }
   }
 
+  public void end() {
+    if (packageLine == null) {
+      return;
+    }
+
+    out.println(packageLine);
+    out.println();
+    out.println(classStart);
+    for (final var field: fields) {
+      out.println(field);
+    }
+    out.println();
+    for (final var constructor: constructors) {
+      out.println(constructor);
+    }
+    out.println();
+    for (final var method: methods) {
+      out.println(method);
+    }
+    out.println("}");
+  }
+
   /** Close readers/writers
    *
-   * @throws IOException on error
    */
-  public void close() throws IOException {
+  public void close() {
     if (out != null) {
       out.close();
     }
+  }
+
+  public void startPackage(final String name) {
+    packageLine = format("package %s;", name);
+  }
+
+  public void generateClassStart() {
+    final var split = getSplitClassName(tm);
+
+    startPackage(split.packageName);
+    classStart = format("public class %s {", outFileName);
+    addField(format("  private final %s entity; ",
+                    split.simpleClassName));
+    constructors.add(
+      format("""
+                public %s(final %s entity) {
+                  this.entity = entity;
+                }
+              """, outFileName, split.simpleClassName));
+  }
+
+  public void addField(final String def) {
+    fields.add(def);
+  }
+
+  public void addMethod(final String def) {
+    methods.add(def);
+  }
+
+  /**
+   * @param methName
+   * @param pars
+   * @param returnType
+   * @param thrownTypes
+   */
+  public String generateSignature(
+          final String methName,
+          final List<? extends VariableElement> pars,
+          final TypeMirror returnType,
+          final List<? extends TypeMirror> thrownTypes) {
+    final String rType = getClassName(returnType);
+
+    final var part1 = format("  public %s %s(", rType, methName);
+    final var buf = new StringBuilder(part1);
+
+    final var pad = " ".repeat(part1.length());
+
+    var i = 0;
+
+    for (final VariableElement par: pars) {
+      buf.append(format("%s %s", 
+                        fixName(par.asType().toString()),
+                        par.getSimpleName().toString()));
+
+      i++;
+      if (i < pars.size()) {
+        buf.append(", ");
+        buf.append(pad);
+      }
+    }
+
+    buf.append(")");
+
+    if (!thrownTypes.isEmpty()) {
+      buf.append("\n");
+      buf.append("        throws ");
+      String delim = "";
+      for (final TypeMirror rt: thrownTypes) {
+        buf.append(delim);
+        delim = ", ";
+
+        buf.append(fixName(rt.toString()));
+      }
+    }
+
+    buf.append(" {");
+    
+    return buf.toString();
   }
 
   /** Generate a call to a getter.
@@ -87,7 +202,7 @@ public class ClassWriter {
   /** Make a call to a setter
    *
    * @param objRef - the reference to the getters class
-   * @param ucFieldName - name of field wit first char upper cased
+   * @param ucFieldName - name of field with first char upper cased
    * @param val - represents the value
    * @return String call to setter
    */
@@ -95,52 +210,6 @@ public class ClassWriter {
                                       final String ucFieldName,
                                       final Object val) {
     return format(".set%s(%s)", ucFieldName, val);
-  }
-
-  /**
-   * @param methName
-   * @param pars
-   * @param returnType
-   * @param thrownTypes
-   */
-  public void generateSignature(final String methName,
-                                final List<? extends VariableElement> pars,
-                                final TypeMirror returnType,
-                                final List<? extends TypeMirror> thrownTypes) {
-    final String rType = getClassName(returnType);
-
-    final var part1 = format("  public %s %s(", rType, methName);
-    out.print(part1);
-    final var pad = " ".repeat(part1.length());
-
-    var i = 0;
-
-    for (final VariableElement par: pars) {
-      prntncc(fixName(par.asType().toString()), " ",
-              par.getSimpleName().toString());
-
-      i++;
-      if (i < pars.size()) {
-        out.println(", ");
-        out.print(pad);
-      }
-    }
-
-    out.print(")");
-
-    if (!thrownTypes.isEmpty()) {
-      out.println();
-      out.print("        throws ");
-      String delim = "";
-      for (final TypeMirror rt: thrownTypes) {
-        out.print(delim);
-        delim = ", ";
-
-        out.print(fixName(rt.toString()));
-      }
-    }
-
-    out.println(" {");
   }
 
   /**
@@ -224,6 +293,34 @@ public class ClassWriter {
     final var pkg = className.substring(0, pos);
     return new SplitClassName(pkg, getImportableClassName(tm, pkg),
                               className.substring(pos + 1));
+  }
+
+  /**
+   * @param setter true for set method
+   * @param UCFieldName of associated field
+   */
+  public record SplitMethodName(boolean setter,
+                                String UCFieldName,
+                                String methodName) {
+  }
+
+  public SplitMethodName getSplitMethodName(final ExecutableElement e) {
+    final var name = e.getSimpleName().toString();
+
+    if (!name.startsWith("get") && !name.startsWith("set")) {
+      throw new IllegalArgumentException(
+              "Invalid method for annotation: " + name);
+    }
+
+    final var fieldName = name.substring(3);
+    if (!Character.isUpperCase(fieldName.charAt(0))) {
+      throw new IllegalArgumentException(
+              "Invalid method for annotation: " + name);
+    }
+
+    return new SplitMethodName(name.startsWith("set"),
+                               fieldName,
+                               name);
   }
 
   /** Return the non-generic type (class without the type parameters) for the

@@ -6,7 +6,7 @@ import java.io.IOException;
 import java.io.LineNumberReader;
 
 public class Template implements Closeable {
-  private final ClassWriter cw;
+  private final ClassHandler cw;
 
   private LineNumberReader templateRdr;
 
@@ -16,7 +16,7 @@ public class Template implements Closeable {
    * @param cw for writing
    * @param templateName of file
    */
-  public Template(final ClassWriter cw,
+  public Template(final ClassHandler cw,
                      final String templateName) {
     this.cw = cw;
 

@@ -26,7 +26,6 @@ import javax.annotation.processing.ProcessingEnvironment;
 import javax.annotation.processing.RoundEnvironment;
 import javax.annotation.processing.SupportedSourceVersion;
 import javax.lang.model.SourceVersion;
-import javax.lang.model.element.Element;
 import javax.lang.model.element.TypeElement;
 
 import static java.lang.String.format;
@@ -47,13 +46,6 @@ public abstract class AnnotationProcessor
    * @return new or existing state
    */
   public abstract ProcessState getState(ProcessingEnvironment env);
-
-  /** Should create new visitor on each call.
-   *
-   * @return visitor
-   */
-  public abstract ElementVisitor getVisitor();
-
   @Override
   public void init(final ProcessingEnvironment env) {
     super.init(env);
@@ -92,14 +84,8 @@ public abstract class AnnotationProcessor
       }
     }
 
-    for (final Element el: roundEnv.getRootElements()) {
-      final String className = el.asType().toString();
-
-      if (pstate.debug()) {
-        pstate.note("Processing " + className);
-      }
-
-      el.accept(getVisitor(), pstate);
+    for (final var el: roundEnv.getRootElements()) {
+      pstate.processClass(el);
     }
 
     if (roundEnv.processingOver()) {
