@@ -40,12 +40,13 @@ import static java.lang.String.format;
  */
 public class ClassHandler {
   private final TypeMirror tm;
+  private final String packageName;
   private final String outFileName;
 
   private final PrintWriter out;
 
   private String packageLine;
-  private TreeSet<String> imports;
+  private final TreeSet<String> imports = new TreeSet<>();
   private String classStart;
   private final TreeSet<String> fields = new TreeSet<>();
   private final List<String> constructors = new ArrayList<>();
@@ -63,6 +64,7 @@ public class ClassHandler {
                       final TypeMirror tm,
                       final String outFileName) {
     this.tm = tm;
+    packageName = getPackage(tm.toString());
     this.outFileName = outFileName;
     try {
       final JavaFileObject outFile =
@@ -79,7 +81,11 @@ public class ClassHandler {
     }
 
     out.println(packageLine);
+    for (final var imp: imports) {
+      out.println(imp);
+    }
     out.println();
+
     out.println(classStart);
     for (final var field: fields) {
       out.println(field);
@@ -108,11 +114,17 @@ public class ClassHandler {
     packageLine = format("package %s;", name);
   }
 
+  public void addImport(final String name) {
+    imports.add(format("import %s;", name));
+  }
+
   public void generateClassStart() {
     final var split = getSplitClassName(tm);
+    final var outClassName = getSimpleClassName(outFileName);
 
     startPackage(split.packageName);
-    classStart = format("public class %s {", outFileName);
+    classStart = format("public class %s {",
+                        outClassName);
     addField(format("  private final %s entity; ",
                     split.simpleClassName));
     constructors.add(
@@ -120,7 +132,7 @@ public class ClassHandler {
                 public %s(final %s entity) {
                   this.entity = entity;
                 }
-              """, outFileName, split.simpleClassName));
+              """, outClassName, split.simpleClassName));
   }
 
   public void addField(final String def) {
@@ -142,9 +154,15 @@ public class ClassHandler {
           final List<? extends VariableElement> pars,
           final TypeMirror returnType,
           final List<? extends TypeMirror> thrownTypes) {
-    final String rType = getClassName(returnType);
+    final var rsplit = getSplitClassName(returnType);
 
-    final var part1 = format("  public %s %s(", rType, methName);
+    if (rsplit.importName != null) {
+      addImport(rsplit.importName);
+    }
+
+    final var part1 = format("  public %s %s(",
+                             rsplit.simpleClassName,
+                             methName);
     final var buf = new StringBuilder(part1);
 
     final var pad = " ".repeat(part1.length());
@@ -152,8 +170,13 @@ public class ClassHandler {
     var i = 0;
 
     for (final VariableElement par: pars) {
-      buf.append(format("%s %s", 
-                        fixName(par.asType().toString()),
+      final var psplit = getSplitClassName(par.asType());
+      if (psplit.importName != null) {
+        addImport(psplit.importName);
+      }
+
+      buf.append(format("%s %s",
+                        psplit.simpleClassName,
                         par.getSimpleName().toString()));
 
       i++;
@@ -177,7 +200,7 @@ public class ClassHandler {
       }
     }
 
-    buf.append(" {");
+    buf.append(" {\n");
     
     return buf.toString();
   }
@@ -223,12 +246,10 @@ public class ClassHandler {
   /** Return a name we might need to import or null.
    *
    * @param tm TypeMirror for class
-   * @param thisPackage current package name
    * @return String
    */
-  public static String getImportableClassName(
-          final TypeMirror tm,
-          final String thisPackage) {
+  public String getImportableClassName(
+          final TypeMirror tm) {
     if (tm.getKind() == TypeKind.VOID) {
       return null;
     }
@@ -240,7 +261,7 @@ public class ClassHandler {
         return null;
       }
 
-      if (samePackage(thisPackage, className)) {
+      if (samePackage(className)) {
         return null;
       }
 
@@ -272,6 +293,16 @@ public class ClassHandler {
     return str;
   }
 
+  public String getSimpleClassName(final String className) {
+    final int pos = className.lastIndexOf('.');
+    if (pos < 0) {
+      throw new IllegalArgumentException("Invalid class name: " +
+                                                 className);
+    }
+
+    return className.substring(pos + 1);
+  }
+
   /**
    * @param packageName the package
    * @param importName non-null if import needed
@@ -284,6 +315,9 @@ public class ClassHandler {
 
   public SplitClassName getSplitClassName(final TypeMirror tm) {
     final var className = nonGeneric(tm.toString());
+    if (tm.getKind().isPrimitive() || "void".equals(className)) {
+      return new SplitClassName(null, null, className);
+    }
     final int pos = className.lastIndexOf('.');
     if (pos < 0) {
       throw new IllegalArgumentException("Invalid class name: " +
@@ -291,16 +325,32 @@ public class ClassHandler {
     }
 
     final var pkg = className.substring(0, pos);
-    return new SplitClassName(pkg, getImportableClassName(tm, pkg),
+    return new SplitClassName(pkg, getImportableClassName(tm),
                               className.substring(pos + 1));
   }
 
   /**
+   *
+   * @param className fully qualified name
+   * @return package
+   */
+  public String getPackage(final String className) {
+    final int pos = nonGeneric(className).lastIndexOf('.');
+    if (pos < 0) {
+      throw new IllegalArgumentException("Invalid class name: " +
+                                                 className);
+    }
+
+    return className.substring(0, pos);
+  }
+
+  /**
    * @param setter true for set method
-   * @param UCFieldName of associated field
+   * @param ucFieldName of associated field
    */
   public record SplitMethodName(boolean setter,
-                                String UCFieldName,
+                                String fieldName,
+                                String ucFieldName,
                                 String methodName) {
   }
 
@@ -312,14 +362,19 @@ public class ClassHandler {
               "Invalid method for annotation: " + name);
     }
 
-    final var fieldName = name.substring(3);
-    if (!Character.isUpperCase(fieldName.charAt(0))) {
+    final var ucFieldName = name.substring(3);
+    if (!Character.isUpperCase(ucFieldName.charAt(0))) {
       throw new IllegalArgumentException(
               "Invalid method for annotation: " + name);
     }
 
+    final var fieldName =
+            ucFieldName.substring(0, 1).toLowerCase() +
+            ucFieldName.substring(1);
+
     return new SplitMethodName(name.startsWith("set"),
                                fieldName,
+                               ucFieldName,
                                name);
   }
 
@@ -342,23 +397,19 @@ public class ClassHandler {
 
   /** ClassDeclaration.getPackage() could be useful here
    *
-   * @param thisPackage our package name
    * @param thatClass fully qualified class
    * @return boolean
    */
-  public static boolean samePackage(final String thisPackage,
-                                    final String thatClass) {
-    //env.getMessager().printNotice("samePackage: " + thisPackage + " " + thatClass);
-
-    if (!thatClass.startsWith(thisPackage)) {
+  public boolean samePackage(final String thatClass) {
+    if (!thatClass.startsWith(packageName)) {
       return false;
     }
 
-    if (thatClass.charAt(thisPackage.length()) != '.') {
+    if (thatClass.charAt(packageName.length()) != '.') {
       return false;
     }
 
-    return thatClass.indexOf(".", thisPackage.length() + 1) < 0;
+    return thatClass.indexOf(".", packageName.length() + 1) < 0;
   }
 
   /**
