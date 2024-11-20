@@ -62,10 +62,6 @@ public class ElementVisitor extends
   @Override
   public Element visitExecutable(final ExecutableElement e,
                                  final ProcessState pstate) {
-    if (pstate.debug()) {
-      pstate.note("Executable: " + e);
-    }
-
     if (pstate.classDepth() > 1) {
       // In inner class
       return e;

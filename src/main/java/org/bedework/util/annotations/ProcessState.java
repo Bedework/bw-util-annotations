@@ -23,6 +23,8 @@ import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.element.TypeParameterElement;
+import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeMirror;
 import javax.tools.Diagnostic;
@@ -69,7 +71,7 @@ public abstract class ProcessState {
 
   public ClassHandler getClassHandler(final TypeMirror tm,
                                       final String outFileName) {
-    classHandler = new ClassHandler(env(),
+    classHandler = new ClassHandler(this,
                                     tm,
                                     outFileName);
 
@@ -235,6 +237,60 @@ public abstract class ProcessState {
     return typeStr.startsWith("java.util.Collection") ||
             typeStr.startsWith("java.util.List") ||
             typeStr.startsWith("java.util.Set");
+  }
+
+  public void dumpElement(final String prefix,
+                          final TypeElement el) {
+    note(prefix + "Type parameters:");
+    for (final var tp: el.getTypeParameters()) {
+      dumpElement(prefix, tp);
+    }
+    dumpElement(prefix, (Element)el);
+  }
+
+  public void dumpElement(final String prefix,
+                          final ExecutableElement el) {
+    dumpElement(prefix, (Element)el);
+
+    note(prefix + "Type parameters:");
+    for (final var tp: el.getTypeParameters()) {
+      dumpElement(prefix + "  ", tp);
+    }
+    note(prefix + "Parameters:");
+    for (final var p: el.getParameters()) {
+      dumpElement(prefix + "  ", p);
+    }
+  }
+
+  public void dumpElement(final String prefix,
+                          final VariableElement el) {
+    note(prefix + " param: " + el.getSimpleName());
+    note(prefix + " const: " + el.getConstantValue());
+    note(prefix + " type: " + el.asType());
+
+    final var typEl = (TypeElement)env.getTypeUtils()
+                                      .asElement(el.asType());
+    if (typEl != null) {
+      dumpElement(prefix + "  ", typEl);
+    }
+    /*
+    dumpElement(prefix,
+                (TypeElement)env.getTypeUtils()
+                                .asElement(el.asType()));
+     */
+  }
+
+  public void dumpElement(final String prefix,
+                          final TypeParameterElement el) {
+    note(prefix + "  generic: " + el.getGenericElement());
+    dumpElement(prefix + "  ", (Element)el);
+  }
+
+  public void dumpElement(final String prefix,
+                          final Element el) {
+    note(prefix + " name:" + el.getSimpleName());
+    note(prefix + " kind:" + el.getKind());
+    note(prefix + "class:" + el.toString());
   }
 
   public void error(final String msg) {

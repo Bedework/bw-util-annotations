@@ -23,7 +23,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.TreeSet;
 
-import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.TypeKind;
@@ -39,6 +38,7 @@ import static java.lang.String.format;
  * @author Mike DOuglass
  */
 public class ClassHandler {
+  private final ProcessState ps;
   private final TypeMirror tm;
   private final String packageName;
   private final String outFileName;
@@ -56,19 +56,20 @@ public class ClassHandler {
   private StringBuilder buf;
 
   /**
-   * @param env the processing environment
+   * @param ps the processing state
    * @param tm for class we're processing
    * @param outFileName for generated file.
    */
-  public ClassHandler(final ProcessingEnvironment env,
+  public ClassHandler(final ProcessState ps,
                       final TypeMirror tm,
                       final String outFileName) {
+    this.ps = ps;
     this.tm = tm;
     packageName = getPackage(tm.toString());
     this.outFileName = outFileName;
     try {
       final JavaFileObject outFile =
-              env.getFiler().createSourceFile(outFileName);
+              ps.env().getFiler().createSourceFile(outFileName);
       out = new PrintWriter(outFile.openOutputStream());
     } catch (final Throwable t) {
       throw new RuntimeException(t);
@@ -81,6 +82,8 @@ public class ClassHandler {
     }
 
     out.println(packageLine);
+    out.println();
+
     for (final var imp: imports) {
       out.println(imp);
     }
@@ -94,10 +97,11 @@ public class ClassHandler {
     for (final var constructor: constructors) {
       out.println(constructor);
     }
-    out.println();
+
     for (final var method: methods) {
       out.println(method);
     }
+
     out.println("}");
   }
 
@@ -119,20 +123,21 @@ public class ClassHandler {
   }
 
   public void generateClassStart() {
-    final var split = getSplitClassName(tm);
+    final var split = getSplitGenericClassName(tm.toString());
     final var outClassName = getSimpleClassName(outFileName);
 
-    startPackage(split.packageName);
+    startPackage(getPackage(tm.toString()));
+    final var className = buildGenericClassName(split);
     classStart = format("public class %s {",
                         outClassName);
     addField(format("  private final %s entity; ",
-                    split.simpleClassName));
+                    className));
     constructors.add(
       format("""
                 public %s(final %s entity) {
                   this.entity = entity;
                 }
-              """, outClassName, split.simpleClassName));
+              """, outClassName, className));
   }
 
   public void addField(final String def) {
@@ -154,14 +159,12 @@ public class ClassHandler {
           final List<? extends VariableElement> pars,
           final TypeMirror returnType,
           final List<? extends TypeMirror> thrownTypes) {
-    final var rsplit = getSplitClassName(returnType);
-
-    if (rsplit.importName != null) {
-      addImport(rsplit.importName);
-    }
+    ps.note(format("generateSignature - return type %s ", returnType.toString()));
+    final var rsplit =
+            getSplitGenericClassName(returnType.toString());
 
     final var part1 = format("  public %s %s(",
-                             rsplit.simpleClassName,
+                             buildGenericClassName(rsplit),
                              methName);
     final var buf = new StringBuilder(part1);
 
@@ -170,13 +173,12 @@ public class ClassHandler {
     var i = 0;
 
     for (final VariableElement par: pars) {
-      final var psplit = getSplitClassName(par.asType());
-      if (psplit.importName != null) {
-        addImport(psplit.importName);
-      }
+      ps.note(format("generateSignature - par %s asType %s ", par.toString(), par.asType().toString()));
+      final var psplit =
+              getSplitGenericClassName(par.asType().toString());
 
-      buf.append(format("%s %s",
-                        psplit.simpleClassName,
+      buf.append(format("final %s %s",
+                        buildGenericClassName(psplit),
                         par.getSimpleName().toString()));
 
       i++;
@@ -271,6 +273,28 @@ public class ClassHandler {
     return null;
   }
 
+  /** Return a name we might need to import or null.
+   *
+   * @param className name for class
+   * @return String or null
+   */
+  public String getImportableClassName(
+          final String className) {
+    if (!className.contains(".")) {
+      return null;
+    }
+
+    if (className.startsWith("java.lang.")) {
+      return null;
+    }
+
+    if (samePackage(className)) {
+      return null;
+    }
+
+    return nonGeneric(className);
+  }
+
   /**
    * @param str name to fix
    * @return String
@@ -296,37 +320,35 @@ public class ClassHandler {
   public String getSimpleClassName(final String className) {
     final int pos = className.lastIndexOf('.');
     if (pos < 0) {
-      throw new IllegalArgumentException("Invalid class name: " +
-                                                 className);
+      return className;
     }
 
     return className.substring(pos + 1);
   }
 
   /**
-   * @param packageName the package
    * @param importName non-null if import needed
    * @param simpleClassName name with package removed
    */
-  public record SplitClassName(String packageName,
-                               String importName,
-                               String simpleClassName) {
+  public record SplitClassName(String importName,
+                               String simpleClassName,
+                               SplitClassName typeParam) {
   }
 
   public SplitClassName getSplitClassName(final TypeMirror tm) {
     final var className = nonGeneric(tm.toString());
     if (tm.getKind().isPrimitive() || "void".equals(className)) {
-      return new SplitClassName(null, null, className);
+      return new SplitClassName(null, className, null);
     }
+
     final int pos = className.lastIndexOf('.');
     if (pos < 0) {
       throw new IllegalArgumentException("Invalid class name: " +
                                                  className);
     }
 
-    final var pkg = className.substring(0, pos);
-    return new SplitClassName(pkg, getImportableClassName(tm),
-                              className.substring(pos + 1));
+    return new SplitClassName(getImportableClassName(tm),
+                              className.substring(pos + 1), null);
   }
 
   /**
@@ -383,7 +405,7 @@ public class ClassHandler {
    *
    * <p>Note: ClassDeclaration.getQualifiedName() does this.
    *
-   * @param type
+   * @param type String class name
    * @return String generic type name
    */
   public static String nonGeneric(final String type) {
@@ -393,6 +415,141 @@ public class ClassHandler {
 
     final int pos = type.indexOf("<");
     return type.substring(0, pos);
+  }
+
+  /** Split structure like
+   *     parta&gt;partb&gt;partc...>>
+   *
+   * @param typeName  part a
+   * @param importName non-null if needs importing
+   * @param typeParams only if partb non-null
+   */
+  public record SplitGenericClassName(
+          String typeName,
+          String importName,
+          List<SplitGenericClassName> typeParams) {
+  }
+
+  public SplitGenericClassName getSplitGenericClassName(
+          final String type) {
+    if (!type.endsWith(">")) {
+      return new SplitGenericClassName(
+              getSimpleClassName(type),
+              getImportableClassName(type),
+              null);
+    }
+
+    final int pos = type.indexOf("<");
+    final var typeName = type.substring(0, pos);
+    final var typeParam = type.substring(pos + 1, type.length() - 1);
+    return new SplitGenericClassName(
+            typeName,
+            getImportableClassName(type),
+            getSplitGenericClassNames(typeParam));
+  }
+
+  private List<SplitGenericClassName> getSplitGenericClassNames(
+          final String type) {
+    /*
+       Need to split a, b<m>, c<p, q, r<x, y, z>> into
+       "a", "b<m>" and "c<p, q<w>, r<x, y, z>>"
+     */
+    final List<SplitGenericClassName> lst = new ArrayList<>();
+
+    var val = type;
+    while (val != null) {
+      final var next = nextComma(val);
+      if (next < 0) {
+        lst.add(getSplitGenericClassName(val));
+        return lst;
+      }
+
+      lst.add(getSplitGenericClassName(
+              val.substring(0, next).trim()));
+      val = val.substring(next + 1);
+    }
+
+    return lst;
+  }
+
+  private int nextComma(final String val) {
+    if (!val.contains(",")) {
+      return -1;
+    }
+
+    final var commaPos = val.indexOf(",");
+    final var ltPos = val.indexOf("<");
+
+    if ((ltPos < 0) || (commaPos < ltPos)) {
+      return commaPos;
+    }
+    final var afterGtPos = matchAngle(val, ltPos);
+    if (afterGtPos < 0) {
+      return afterGtPos;
+    }
+
+    return val.indexOf(",", afterGtPos);
+  }
+
+  private int matchAngle(final String val,
+                         final int start) {
+    var pos = start;
+    var level = 0;
+    while (pos < val.length()) {
+      final var ch = val.charAt(pos);
+      if (ch == '<') {
+        level++;
+      } else if (ch == '>') {
+        level--;
+      }
+
+      pos++;
+
+      if (level == 0) {
+        return pos;
+      }
+    }
+
+    return -1;
+  }
+
+  public String buildGenericClassName(
+          final SplitGenericClassName split) {
+    final StringBuilder sb = new StringBuilder(split.typeName);
+    if (split.importName != null) {
+      addImport(split.importName);
+    }
+
+    if (split.typeParams != null) {
+      appendTypeParams(sb, split.typeParams);
+    }
+
+    return sb.toString();
+  }
+
+  private void appendTypeParams(
+          final StringBuilder sb,
+          final List<SplitGenericClassName> typeParams) {
+    if (typeParams.isEmpty()) {
+      return;
+    }
+
+    sb.append("<");
+    String delim = "";
+
+    for (final SplitGenericClassName t: typeParams) {
+      sb.append(delim);
+      delim = ", ";
+      sb.append(t.typeName);
+      if (t.importName != null) {
+        addImport(t.importName);
+      }
+      if (t.typeParams != null) {
+        appendTypeParams(sb, t.typeParams);
+      }
+    }
+
+    sb.append(">");
   }
 
   /** ClassDeclaration.getPackage() could be useful here
@@ -413,7 +570,7 @@ public class ClassHandler {
   }
 
   /**
-   * @param val
+   * @param val text
    */
   public void prntncc(final String... val) {
     for (final String ln: val) {
