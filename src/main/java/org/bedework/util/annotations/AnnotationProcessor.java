@@ -46,6 +46,7 @@ public abstract class AnnotationProcessor
    * @return new or existing state
    */
   public abstract ProcessState getState(ProcessingEnvironment env);
+
   @Override
   public void init(final ProcessingEnvironment env) {
     super.init(env);
