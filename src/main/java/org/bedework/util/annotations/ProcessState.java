@@ -18,7 +18,7 @@
 */
 package org.bedework.util.annotations;
 
-import javax.annotation.processing.ProcessingEnvironment;
+import jakarta.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
